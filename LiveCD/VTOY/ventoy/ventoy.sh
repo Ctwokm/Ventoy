@@ -20,7 +20,7 @@ get_disk_size() {
 enum_disk() {
     id=1
     rm -f /device.list
-    ls /sys/block/ | grep 'd[a-z]' | while read dev; do
+    ls /sys/block/ | egrep 'd[a-z]|nvme|mmc|nbd' | while read dev; do
         if ! [ -b /dev/$dev ]; then
             continue
         fi
@@ -145,7 +145,7 @@ ventoy_configuration() {
         elif [ "$Answer" = "1" ]; then            
             while true; do
                 read -p "Please input the preserve space in MB: "  Answer
-                if echo $Answer | grep -q "^[1-9][0-9]*$"; then
+                if echo $Answer | grep -q "^[0-9][0-9]*$"; then
                     echo $Answer > /preserve.txt
                     break
                 fi
@@ -180,7 +180,7 @@ vline=$(printf "*              Ventoy LiveCD %6s              *\r\n" "$VTVER")
 info "$vline"
 info "**************************************************"
 echo ""
-info "Scaning devices ......"
+info "Scanning devices ......"
 sleep 5
 
 enum_disk

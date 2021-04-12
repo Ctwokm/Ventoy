@@ -636,6 +636,21 @@ static wim_lookup_entry * ventoy_find_meta_entry(wim_header *header, wim_lookup_
     return NULL;
 }
 
+static grub_uint64_t ventoy_get_stream_len(wim_directory_entry *dir)
+{
+    grub_uint16_t i;
+    grub_uint64_t offset = 0;
+    wim_stream_entry *stream = (wim_stream_entry *)((char *)dir + dir->len);
+
+    for (i = 0; i < dir->streams; i++)
+    {
+        offset += stream->len;
+        stream = (wim_stream_entry *)((char *)stream + stream->len);
+    }
+
+    return offset;
+}
+
 static int ventoy_update_all_hash(wim_patch *patch, void *meta_data, wim_directory_entry *dir)
 {
     if ((meta_data == NULL) || (dir == NULL))
@@ -660,8 +675,15 @@ static int ventoy_update_all_hash(wim_patch *patch, void *meta_data, wim_directo
         {
             ventoy_update_all_hash(patch, meta_data, (wim_directory_entry *)((char *)meta_data + dir->subdir));
         }
-    
-        dir = (wim_directory_entry *)((char *)dir + dir->len);
+
+        if (dir->streams)
+        {
+            dir = (wim_directory_entry *)((char *)dir + dir->len + ventoy_get_stream_len(dir));
+        }
+        else
+        {
+            dir = (wim_directory_entry *)((char *)dir + dir->len);            
+        }
     } while (dir->len >= sizeof(wim_directory_entry));
 
     return 0;
@@ -860,7 +882,14 @@ static int ventoy_wimdows_locate_wim(const char *disk, wim_patch *patch)
     }
 
     security = (wim_security_header *)decompress_data;
-    rootdir = (wim_directory_entry *)(decompress_data + ((security->len + 7) & 0xFFFFFFF8U));
+    if (security->len > 0)
+    {
+        rootdir = (wim_directory_entry *)(decompress_data + ((security->len + 7) & 0xFFFFFFF8U));
+    }
+    else
+    {
+        rootdir = (wim_directory_entry *)(decompress_data + 8);
+    }
 
     /* search winpeshl.exe dirent entry */
     search = search_replace_wim_dirent(decompress_data, rootdir);
@@ -1492,7 +1521,7 @@ static grub_uint32_t ventoy_get_wim_iso_offset(const char *filepath)
     grub_file_t file;
     char cmdbuf[128];
     
-    grub_snprintf(cmdbuf, sizeof(cmdbuf), "loopback wimiso %s", filepath);
+    grub_snprintf(cmdbuf, sizeof(cmdbuf), "loopback wimiso \"%s\"", filepath);
     grub_script_execute_sourcecode(cmdbuf);
 
     file = ventoy_grub_file_open(VENTOY_FILE_TYPE, "%s", "(wimiso)/boot/boot.wim");
@@ -1540,6 +1569,41 @@ static int ventoy_get_wim_chunklist(const char *filename, ventoy_img_chunk_list 
     grub_file_close(wimfile);
 
     return 0;
+}
+
+grub_err_t ventoy_cmd_wim_check_bootable(grub_extcmd_context_t ctxt, int argc, char **args)
+{
+    grub_uint32_t boot_index;
+    grub_file_t file = NULL;
+    wim_header *wimhdr = NULL;
+    
+    (void)ctxt;
+    (void)argc;
+
+    wimhdr = grub_zalloc(sizeof(wim_header));
+    if (!wimhdr)
+    {
+        return 1;
+    }
+
+    file = ventoy_grub_file_open(VENTOY_FILE_TYPE, "%s", args[0]);
+    if (!file)
+    {
+        grub_free(wimhdr);
+        return 1;
+    }
+
+    grub_file_read(file, wimhdr, sizeof(wim_header));
+    grub_file_close(file);
+    boot_index = wimhdr->boot_index;
+    grub_free(wimhdr);
+
+    if (boot_index == 0)
+    {
+        return 1;
+    }
+    
+    VENTOY_CMD_RETURN(GRUB_ERR_NONE);
 }
 
 grub_err_t ventoy_cmd_wim_chain_data(grub_extcmd_context_t ctxt, int argc, char **args)
